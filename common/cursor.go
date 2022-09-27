@@ -42,7 +42,7 @@ const (
 
 // DefaultCursor ...
 func DefaultCursor(obj any) IPageCursor {
-	pc, err := NewCursor(obj)
+	pc, err := NewCursor(obj, defaultLimit, PageDirForward)
 	if err != nil {
 		return nil
 	}
@@ -277,11 +277,11 @@ func (c *pageCursor) initEmptyCursor() error {
 }
 
 // NewCursor creates new page cursor object
-func NewCursor(obj interface{}) (IPageCursor, error) {
+func NewCursor(obj interface{}, limit uint32, dir PageDir) (IPageCursor, error) {
 
 	c := &pageCursor{
-		limit: defaultLimit,
-		dir:   PageDirForward,
+		limit: limit,
+		dir:   dir,
 
 		model: obj,
 	}
