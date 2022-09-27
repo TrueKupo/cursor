@@ -1,4 +1,4 @@
-package common
+package cursor
 
 import (
 	"encoding/base64"
@@ -21,28 +21,28 @@ const (
 	maxLimit     = 100
 )
 
-// CursorValueType types of cursor values
-type CursorValueType uint8
+// valueType types of cursor values
+type valueType uint8
 
 // types of cursor values
 const (
-	CursorTypeInt64 CursorValueType = iota + 1
-	CursorTypeString
-	CursorTypeTime
+	valueTypeInt64 valueType = iota + 1
+	valueTypeString
+	valueTypeTime
 )
 
-// PageDir page cursor direction type
-type PageDir uint8
+// direction page cursor direction type
+type direction uint8
 
 // page cursor direction values
 const (
-	PageDirForward PageDir = iota
-	PageDirBackward
+	Forward direction = iota
+	Backward
 )
 
-// DefaultCursor ...
-func DefaultCursor(obj any) IPageCursor {
-	pc, err := NewCursor(obj, defaultLimit, PageDirForward)
+// NewDefault ...
+func NewDefault(obj any) Cursor {
+	pc, err := NewCursor(obj, defaultLimit, Forward)
 	if err != nil {
 		return nil
 	}
@@ -50,25 +50,27 @@ func DefaultCursor(obj any) IPageCursor {
 	return pc
 }
 
-// IPageCursor page cursor interface
-type IPageCursor interface {
+// Cursor page cursor interface
+type Cursor interface {
 	ID() string
 	Limit() uint32
-	Dir() PageDir
+	Dir() direction
 	IsForward() bool
 	IsBackward() bool
 	Field() string
-	Kind() CursorValueType
+	Kind() valueType
 	Value() any
 	CreateID(obj any) string
 
-	WithLimit(limit uint32) IPageCursor
-	WithDirection(dir PageDir) IPageCursor
-	WithCursorID(cursorID string) IPageCursor
+	WithLimit(limit uint32) Cursor
+	WithDirection(dir direction) Cursor
+	WithCursorID(cursorID string) Cursor
+
+	Builder(kind sqlBuilderKind) Builder
 }
 
-// IPageInfo page info interface
-type IPageInfo interface {
+// IPage page info interface
+type IPage interface {
 	FirstID() string
 	LastID() string
 	HasPrev() bool
@@ -79,25 +81,27 @@ type IPageInfo interface {
 type pageCursor struct {
 	cursorID string
 	limit    uint32
-	dir      PageDir
+	dir      direction
 	field    string
 	value    any
-	kind     CursorValueType
+	kind     valueType
 
 	model any
+
+	builder Builder
 }
 
-func (c *pageCursor) WithLimit(limit uint32) IPageCursor {
+func (c *pageCursor) WithLimit(limit uint32) Cursor {
 	c.limit = limit
 	return c
 }
 
-func (c *pageCursor) WithDirection(dir PageDir) IPageCursor {
+func (c *pageCursor) WithDirection(dir direction) Cursor {
 	c.dir = dir
 	return c
 }
 
-func (c *pageCursor) WithCursorID(cursorID string) IPageCursor {
+func (c *pageCursor) WithCursorID(cursorID string) Cursor {
 
 	if cursorID == "" {
 		err := c.initEmptyCursor()
@@ -172,18 +176,18 @@ func (c *pageCursor) Limit() uint32 {
 }
 
 // Dir get cursor direction
-func (c *pageCursor) Dir() PageDir {
+func (c *pageCursor) Dir() direction {
 	return c.dir
 }
 
 // IsForward true if cursor direction is forward
 func (c *pageCursor) IsForward() bool {
-	return c.dir == PageDirForward
+	return c.dir == Forward
 }
 
 // IsBackward true if cursor direction is backward
 func (c *pageCursor) IsBackward() bool {
-	return c.dir == PageDirBackward
+	return c.dir == Backward
 }
 
 // Field name of field to be used as a cursor
@@ -196,7 +200,7 @@ func (c *pageCursor) Value() any {
 	return c.value
 }
 
-func (c *pageCursor) Kind() CursorValueType {
+func (c *pageCursor) Kind() valueType {
 	return c.kind
 }
 
@@ -212,11 +216,11 @@ func (c *pageCursor) CreateID(obj any) string {
 
 	var value string
 	switch c.Kind() {
-	case CursorTypeInt64:
+	case valueTypeInt64:
 		value = strconv.FormatInt(f.Int(), 10)
-	case CursorTypeString:
+	case valueTypeString:
 		value = f.String()
-	case CursorTypeTime:
+	case valueTypeTime:
 		tm := f.Interface().(time.Time)
 		m := tm.UnixMicro()
 		value = strconv.FormatInt(m, 10)
@@ -277,7 +281,7 @@ func (c *pageCursor) initEmptyCursor() error {
 }
 
 // NewCursor creates new page cursor object
-func NewCursor(obj interface{}, limit uint32, dir PageDir) (IPageCursor, error) {
+func NewCursor(obj interface{}, limit uint32, dir direction) (Cursor, error) {
 
 	c := &pageCursor{
 		limit: limit,
@@ -298,12 +302,12 @@ func NewCursor(obj interface{}, limit uint32, dir PageDir) (IPageCursor, error) 
 	return c, nil
 }
 
-// GetCursorResult gets slice of result models
-func GetCursorResult[R any](c IPageCursor, in []*R) ([]*R, IPageInfo, error) {
+// GetResult gets slice of result models
+func GetResult[R any](c Cursor, in []*R) ([]*R, IPage, error) {
 	return getCursorSlice(c, in), getPageInfo(c, in), nil
 }
 
-func getCursorSlice[R any](c IPageCursor, in []*R) []*R {
+func getCursorSlice[R any](c Cursor, in []*R) []*R {
 	l := len(in)
 	if l > int(c.Limit()) {
 		l = int(c.Limit())
@@ -311,7 +315,7 @@ func getCursorSlice[R any](c IPageCursor, in []*R) []*R {
 	return in[:l]
 }
 
-func getPageInfo[R any](c IPageCursor, in []*R) IPageInfo {
+func getPageInfo[R any](c Cursor, in []*R) IPage {
 	if len(in) == 0 {
 		return &pageInfo{hasNext: false}
 	}
@@ -335,30 +339,30 @@ func getPageInfo[R any](c IPageCursor, in []*R) IPageInfo {
 	return res
 }
 
-func mapFieldType(obj any, name string) CursorValueType {
+func mapFieldType(obj any, name string) valueType {
 
 	field := reflect.Indirect(reflect.ValueOf(obj)).FieldByName(name)
 	switch field.Kind() {
 	case reflect.Int, reflect.Int32:
-		return CursorTypeInt64
+		return valueTypeInt64
 	case reflect.String:
-		return CursorTypeString
+		return valueTypeString
 	case reflect.Struct:
 		if field.Type() == reflect.TypeOf(time.Time{}) {
-			return CursorTypeTime
+			return valueTypeTime
 		}
 	}
 
 	return 0
 }
 
-func decodeFieldValue(raw string, kind CursorValueType) (any, error) {
+func decodeFieldValue(raw string, kind valueType) (any, error) {
 	switch kind {
-	case CursorTypeInt64:
+	case valueTypeInt64:
 		return strconv.ParseInt(raw, 10, 64)
-	case CursorTypeString:
+	case valueTypeString:
 		return raw, nil
-	case CursorTypeTime:
+	case valueTypeTime:
 		usec, err := strconv.ParseInt(raw, 10, 64)
 		if err != nil {
 			return nil, err
