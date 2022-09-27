@@ -8,19 +8,21 @@ import (
 	"github.com/truekupo/cursor/spanner"
 )
 
-type Chat struct {
+type Object struct {
 	CreatedAt time.Time `cursor:"default"`
 }
 
 func main() {
-	cursor, err := common.NewCursor("Q3JlYXRlZEF0OjE2NjQxNzcyODE0NDU2NzY=", 10, common.PageDirForward, Chat{})
-	if err != nil {
-		panic(err)
-	}
-	sql := "SELECT * FROM Chats WHERE 1=1"
+	cr := common.DefaultCursor(Object{}).
+		WithLimit(10).
+		WithDirection(common.PageDirForward).
+		WithCursorID("Q3JlYXRlZEF0OjE2NjQxNzcyODE0NDU2NzY=")
+
+	//goland:noinspection ALL
+	sql := "SELECT * FROM Objects WHERE 1=1"
 	params := make(map[string]interface{})
 	sql, params = spanner.NewBuilder(sql).
-		WithCursor(cursor).
+		WithCursor(cr).
 		WithParams(params).
 		ToSQL()
 	fmt.Println(sql, params)

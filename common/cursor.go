@@ -2,7 +2,6 @@ package common
 
 import (
 	"encoding/base64"
-	"fmt"
 	"reflect"
 	"strconv"
 	"strings"
@@ -10,15 +9,6 @@ import (
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-)
-
-// PageDir page cursor direction type
-type PageDir uint8
-
-// page cursor direction values
-const (
-	PageDirForward PageDir = iota
-	PageDirBackward
 )
 
 const (
@@ -41,6 +31,25 @@ const (
 	CursorTypeTime
 )
 
+// PageDir page cursor direction type
+type PageDir uint8
+
+// page cursor direction values
+const (
+	PageDirForward PageDir = iota
+	PageDirBackward
+)
+
+// DefaultCursor ...
+func DefaultCursor(obj any) IPageCursor {
+	pc, err := NewCursor(obj)
+	if err != nil {
+		return nil
+	}
+
+	return pc
+}
+
 // IPageCursor page cursor interface
 type IPageCursor interface {
 	ID() string
@@ -52,6 +61,10 @@ type IPageCursor interface {
 	Kind() CursorValueType
 	Value() any
 	CreateID(obj any) string
+
+	WithLimit(limit uint32) IPageCursor
+	WithDirection(dir PageDir) IPageCursor
+	WithCursorID(cursorID string) IPageCursor
 }
 
 // IPageInfo page info interface
@@ -64,12 +77,80 @@ type IPageInfo interface {
 }
 
 type pageCursor struct {
-	id    string
-	limit uint32
-	dir   PageDir
-	field string
-	value any
-	kind  CursorValueType
+	cursorID string
+	limit    uint32
+	dir      PageDir
+	field    string
+	value    any
+	kind     CursorValueType
+
+	model any
+}
+
+func (c *pageCursor) WithLimit(limit uint32) IPageCursor {
+	c.limit = limit
+	return c
+}
+
+func (c *pageCursor) WithDirection(dir PageDir) IPageCursor {
+	c.dir = dir
+	return c
+}
+
+func (c *pageCursor) WithCursorID(cursorID string) IPageCursor {
+
+	if cursorID == "" {
+		err := c.initEmptyCursor()
+		if err != nil {
+			// TODO
+			// may be use some isValid field
+			// add metrics/alerts
+			return c
+		}
+	}
+
+	if cursorID != "" {
+		b, err := base64.StdEncoding.DecodeString(cursorID)
+		if err != nil {
+			return c
+			//return nil, status.Errorf(codes.InvalidArgument, "failed to decode base64 id to cursor value: %s", cursorID)
+		}
+		parts := strings.Split(string(b), ":")
+		if len(parts) != 2 {
+			return c
+			//return nil, status.Errorf(codes.InvalidArgument, "invalid cursor id")
+		}
+		c.field, c.value = parts[0], parts[1]
+
+		t := reflect.TypeOf(c.model)
+		sf, ok := t.FieldByName(c.field)
+		if !ok {
+			return c
+			//return nil, status.Errorf(codes.InvalidArgument, "not supported cursor field")
+		}
+		_, ok = sf.Tag.Lookup(tagName)
+		if !ok {
+			return c
+			//return nil, status.Errorf(codes.InvalidArgument, "not supported cursor field")
+		}
+
+		kind := mapFieldType(c.model, c.field)
+		if kind == 0 {
+			return c
+			//return nil, status.Errorf(codes.InvalidArgument, "not supported cursor type")
+		}
+
+		c.kind = kind
+
+		c.value, err = decodeFieldValue(parts[1], c.kind)
+		if err != nil {
+			return c
+			//return nil, err
+		}
+	}
+
+	c.cursorID = cursorID
+	return c
 }
 
 type pageInfo struct {
@@ -82,7 +163,7 @@ type pageInfo struct {
 
 // ID get last id
 func (c *pageCursor) ID() string {
-	return c.id
+	return c.cursorID
 }
 
 // Limit get query limit
@@ -171,75 +252,47 @@ func (p *pageInfo) Length() uint32 {
 	return p.length
 }
 
+func (c *pageCursor) initEmptyCursor() error {
+	t := reflect.TypeOf(c.model)
+
+	for i := 0; i < t.NumField(); i++ {
+		tag := t.Field(i).Tag.Get(tagName)
+		if tag == defValue {
+			kind := mapFieldType(c.model, t.Field(i).Name)
+			if kind == 0 {
+				return status.Errorf(codes.InvalidArgument, "not supported cursor type")
+			}
+
+			c.field = t.Field(i).Name
+			c.kind = kind
+			break
+		}
+	}
+
+	if c.field == "" {
+		return status.Errorf(codes.InvalidArgument, "default field for cursor not found")
+	}
+
+	return nil
+}
+
 // NewCursor creates new page cursor object
-func NewCursor(cursorID string, limit uint32, dir PageDir, obj interface{}) (IPageCursor, error) {
+func NewCursor(obj interface{}) (IPageCursor, error) {
 
 	c := &pageCursor{
-		id:    cursorID,
-		limit: limit,
-		dir:   dir,
+		limit: defaultLimit,
+		dir:   PageDirForward,
+
+		model: obj,
 	}
 
-	if cursorID == "" {
-		t := reflect.TypeOf(obj)
-
-		for i := 0; i < t.NumField(); i++ {
-			tag := t.Field(i).Tag.Get(tagName)
-			if tag == defValue {
-				kind := mapFieldType(obj, t.Field(i).Name)
-				if kind == 0 {
-					return nil, status.Errorf(codes.InvalidArgument, "not supported cursor type")
-				}
-
-				c.field = t.Field(i).Name
-				c.kind = kind
-				break
-			}
-		}
-
-		if c.field == "" {
-			return nil, status.Errorf(codes.InvalidArgument, "default field for cursor not found")
-		}
+	err := c.initEmptyCursor()
+	if err != nil {
+		return nil, err
 	}
 
-	if cursorID != "" {
-		b, err := base64.StdEncoding.DecodeString(cursorID)
-		if err != nil {
-			return nil, status.Errorf(codes.InvalidArgument, "failed to decode base64 id to cursor value: %s", cursorID)
-		}
-		parts := strings.Split(string(b), ":")
-		if len(parts) != 2 {
-			return nil, status.Errorf(codes.InvalidArgument, "invalid cursor id")
-		}
-		c.field, c.value = parts[0], parts[1]
-
-		t := reflect.TypeOf(obj)
-		sf, ok := t.FieldByName(c.field)
-		if !ok {
-			return nil, status.Errorf(codes.InvalidArgument, "not supported cursor field")
-		}
-		_, ok = sf.Tag.Lookup(tagName)
-		if !ok {
-			return nil, status.Errorf(codes.InvalidArgument, "not supported cursor field")
-		}
-
-		kind := mapFieldType(obj, c.field)
-		if kind == 0 {
-			return nil, status.Errorf(codes.InvalidArgument, "not supported cursor type")
-		}
-
-		c.kind = kind
-
-		c.value, err = decodeFieldValue(parts[1], c.kind)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	if limit == 0 {
+	if c.limit == 0 || c.limit > maxLimit {
 		c.limit = defaultLimit
-	} else if limit > maxLimit {
-		return nil, status.Errorf(codes.InvalidArgument, fmt.Sprint("max limit value is ", maxLimit))
 	}
 
 	return c, nil
