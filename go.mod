@@ -1,4 +1,4 @@
-module github.com/truekupo/graphql-grpc-cursor
+module github.com/truekupo/cursor
 
 go 1.19
 
