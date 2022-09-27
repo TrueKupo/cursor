@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/truekupo/graphql-grpc-cursor/common"
-	"github.com/truekupo/graphql-grpc-cursor/spanner"
+	"github.com/truekupo/cursor/common"
+	"github.com/truekupo/cursor/spanner"
 )
 
 type Chat struct {

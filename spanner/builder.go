@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/truekupo/graphql-grpc-cursor/common"
+	"github.com/truekupo/cursor/common"
 )
 
 type ParamsMap map[string]interface{}
