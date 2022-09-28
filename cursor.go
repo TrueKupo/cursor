@@ -129,57 +129,21 @@ func (c *pageCursor) WithDirection(dir direction) Cursor {
 
 func (c *pageCursor) WithCursorID(cursorID string) Cursor {
 
+	var err error
 	if cursorID == "" {
-		err := c.initEmptyCursor()
-		if err != nil {
-			// TODO
-			// may be use some isValid field
-			// add metrics/alerts
-			return c
-		}
+		err = c.initEmptyCursor()
 	}
 
 	if cursorID != "" {
-		b, err := base64.StdEncoding.DecodeString(cursorID)
-		if err != nil {
-			return c
-			//return nil, status.Errorf(codes.InvalidArgument, "failed to decode base64 id to cursor value: %s", cursorID)
-		}
-		parts := strings.Split(string(b), ":")
-		if len(parts) != 2 {
-			return c
-			//return nil, status.Errorf(codes.InvalidArgument, "invalid cursor id")
-		}
-		c.field, c.value = parts[0], parts[1]
-
-		t := reflect.TypeOf(c.model)
-		sf, ok := t.FieldByName(c.field)
-		if !ok {
-			return c
-			//return nil, status.Errorf(codes.InvalidArgument, "not supported cursor field")
-		}
-		_, ok = sf.Tag.Lookup(tagName)
-		if !ok {
-			return c
-			//return nil, status.Errorf(codes.InvalidArgument, "not supported cursor field")
-		}
-
-		kind := mapFieldType(c.model, c.field)
-		if kind == 0 {
-			return c
-			//return nil, status.Errorf(codes.InvalidArgument, "not supported cursor type")
-		}
-
-		c.kind = kind
-
-		c.value, err = decodeFieldValue(parts[1], c.kind)
-		if err != nil {
-			return c
-			//return nil, err
-		}
+		_, err = applyCursorID(c, cursorID)
 	}
 
-	c.cursorID = cursorID
+	if err != nil {
+		// TODO
+		// may be use some isValid field
+		// add metrics/alerts
+	}
+
 	return c
 }
 
@@ -384,9 +348,6 @@ func applyCursorID(c *pageCursor, cursorID string) (Cursor, error) {
 	if cursorID == "" {
 		err := c.initEmptyCursor()
 		if err != nil {
-			// TODO
-			// may be use some isValid field
-			// add metrics/alerts
 			return c, err
 		}
 	}
@@ -394,12 +355,10 @@ func applyCursorID(c *pageCursor, cursorID string) (Cursor, error) {
 	if cursorID != "" {
 		b, err := base64.StdEncoding.DecodeString(cursorID)
 		if err != nil {
-			//return c
 			return c, status.Errorf(codes.InvalidArgument, "failed to decode base64 id to cursor value: %s", cursorID)
 		}
 		parts := strings.Split(string(b), ":")
 		if len(parts) != 2 {
-			//return c
 			return c, status.Errorf(codes.InvalidArgument, "invalid cursor id")
 		}
 		c.field, c.value = parts[0], parts[1]
@@ -407,18 +366,15 @@ func applyCursorID(c *pageCursor, cursorID string) (Cursor, error) {
 		t := reflect.TypeOf(c.model)
 		sf, ok := t.FieldByName(c.field)
 		if !ok {
-			//return c
 			return c, status.Errorf(codes.InvalidArgument, "not supported cursor field")
 		}
 		_, ok = sf.Tag.Lookup(tagName)
 		if !ok {
-			//return c
 			return c, status.Errorf(codes.InvalidArgument, "not supported cursor field")
 		}
 
 		kind := mapFieldType(c.model, c.field)
 		if kind == 0 {
-			//return c
 			return c, status.Errorf(codes.InvalidArgument, "not supported cursor type")
 		}
 
@@ -426,7 +382,6 @@ func applyCursorID(c *pageCursor, cursorID string) (Cursor, error) {
 
 		c.value, err = decodeFieldValue(parts[1], c.kind)
 		if err != nil {
-			//return c
 			return c, err
 		}
 	}
