@@ -2,6 +2,7 @@ package cursor
 
 import (
 	"encoding/base64"
+	"fmt"
 	"reflect"
 	"strconv"
 	"strings"
@@ -38,6 +39,7 @@ type direction uint8
 const (
 	Forward direction = iota
 	Backward
+	invalidDirection
 )
 
 // NewDefault ...
@@ -94,6 +96,12 @@ type Page interface {
 	HasNext() bool
 	// Length returns length of result set
 	Length() uint32
+}
+
+type Params struct {
+	ID    string
+	Dir   int
+	Limit uint32
 }
 
 type pageCursor struct {
@@ -291,28 +299,30 @@ func (c *pageCursor) initEmptyCursor() error {
 }
 
 // NewCursor creates new page cursor object
-func NewCursor(obj interface{}, limit uint32, dir direction) (Cursor, error) {
+func NewCursor(obj any, limit uint32, dir direction) (Cursor, error) {
+	return createCursor(obj, limit, dir)
+}
 
-	c := &pageCursor{
-		limit: limit,
-		dir:   dir,
-
-		model: obj,
+// FromParams creates new page cursor from Params object
+func FromParams(obj any, params *Params) (Cursor, error) {
+	if params == nil {
+		return nil, status.Error(codes.InvalidArgument, "nil value passed as params")
 	}
-
-	err := c.initEmptyCursor()
+	dir, err := decodeDirection(params.Dir)
 	if err != nil {
 		return nil, err
 	}
-
-	if c.limit == 0 || c.limit > maxLimit {
-		c.limit = defaultLimit
+	cr, err := createCursor(obj, params.Limit, dir)
+	if err != nil {
+		return nil, err
 	}
-
-	return c, nil
+	if params.ID != "" {
+		return applyCursorID(cr, params.ID)
+	}
+	return cr, nil
 }
 
-// GetResult gets slice of result models
+// GetResult returns slice of result models
 func GetResult[R any](c Cursor, in []*R) ([]*R, Page, error) {
 	return getCursorSlice(c, in), getPageInfo(c, in), nil
 }
@@ -349,6 +359,82 @@ func getPageInfo[R any](c Cursor, in []*R) Page {
 	return res
 }
 
+func createCursor(obj any, limit uint32, dir direction) (*pageCursor, error) {
+	c := &pageCursor{
+		limit: limit,
+		dir:   dir,
+
+		model: obj,
+	}
+
+	err := c.initEmptyCursor()
+	if err != nil {
+		return nil, err
+	}
+
+	if c.limit == 0 || c.limit > maxLimit {
+		c.limit = defaultLimit
+	}
+
+	return c, nil
+}
+
+func applyCursorID(c *pageCursor, cursorID string) (Cursor, error) {
+
+	if cursorID == "" {
+		err := c.initEmptyCursor()
+		if err != nil {
+			// TODO
+			// may be use some isValid field
+			// add metrics/alerts
+			return c, err
+		}
+	}
+
+	if cursorID != "" {
+		b, err := base64.StdEncoding.DecodeString(cursorID)
+		if err != nil {
+			//return c
+			return c, status.Errorf(codes.InvalidArgument, "failed to decode base64 id to cursor value: %s", cursorID)
+		}
+		parts := strings.Split(string(b), ":")
+		if len(parts) != 2 {
+			//return c
+			return c, status.Errorf(codes.InvalidArgument, "invalid cursor id")
+		}
+		c.field, c.value = parts[0], parts[1]
+
+		t := reflect.TypeOf(c.model)
+		sf, ok := t.FieldByName(c.field)
+		if !ok {
+			//return c
+			return c, status.Errorf(codes.InvalidArgument, "not supported cursor field")
+		}
+		_, ok = sf.Tag.Lookup(tagName)
+		if !ok {
+			//return c
+			return c, status.Errorf(codes.InvalidArgument, "not supported cursor field")
+		}
+
+		kind := mapFieldType(c.model, c.field)
+		if kind == 0 {
+			//return c
+			return c, status.Errorf(codes.InvalidArgument, "not supported cursor type")
+		}
+
+		c.kind = kind
+
+		c.value, err = decodeFieldValue(parts[1], c.kind)
+		if err != nil {
+			//return c
+			return c, err
+		}
+	}
+
+	c.cursorID = cursorID
+	return c, nil
+}
+
 func mapFieldType(obj any, name string) valueType {
 
 	field := reflect.Indirect(reflect.ValueOf(obj)).FieldByName(name)
@@ -364,6 +450,16 @@ func mapFieldType(obj any, name string) valueType {
 	}
 
 	return 0
+}
+
+func decodeDirection(dir int) (direction, error) {
+	switch dir {
+	case 0:
+		return Forward, nil
+	case 1:
+		return Backward, nil
+	}
+	return invalidDirection, status.Errorf(codes.InvalidArgument, fmt.Sprintf("invalid direction value %d", dir))
 }
 
 func decodeFieldValue(raw string, kind valueType) (any, error) {

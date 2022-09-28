@@ -61,10 +61,12 @@ func (b *sqlBuilder) ToSQL() (string, BuilderParams, error) {
 		return "", nil, status.Error(codes.InvalidArgument, "invalid builder type")
 	}
 	sql := b.sql
-	if strings.Contains(sql, "WHERE") {
-		sql += " AND "
-	} else {
-		sql += " WHERE "
+	if b.cursor.CursorID() != "" {
+		if strings.Contains(sql, "WHERE") {
+			sql += " AND "
+		} else {
+			sql += " WHERE "
+		}
 	}
 	sql += s
 
