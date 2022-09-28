@@ -50,31 +50,49 @@ func NewDefault(obj any) Cursor {
 	return pc
 }
 
-// Cursor page cursor interface
+// Cursor descriptor providing information about cursor and method to modify it
 type Cursor interface {
-	ID() string
+	// CursorID is base64 encoded string containing field name and value to be used as a cursor
+	CursorID() string
+	// Limit result length with this number
 	Limit() uint32
-	Dir() direction
+	// Direction of the search, can be either Forward or Backward
+	Direction() direction
+	// IsForward is true if the direction is Forward
 	IsForward() bool
+	// IsBackward is true if the direction is Backward
 	IsBackward() bool
+	// Field name in the model to be used as a cursor
 	Field() string
+	// Kind is a data type of cursor field
 	Kind() valueType
+	// Value of cursor field which will be used for search
 	Value() any
+	// CreateID generates new base64 cursor id pointing to the passed object
 	CreateID(obj any) string
 
+	// WithLimit sets result length limit
 	WithLimit(limit uint32) Cursor
+	// WithDirection sets search direction
 	WithDirection(dir direction) Cursor
+	// WithCursorID applies new cursor id to be used in a search
 	WithCursorID(cursorID string) Cursor
 
+	// Builder helper method which returns sql builder with this cursor
 	Builder(kind sqlBuilderKind) Builder
 }
 
-// IPage page info interface
-type IPage interface {
+// Page provides information about result page
+type Page interface {
+	// FirstID is id of first item on a page
 	FirstID() string
+	// LastID is id of last item on a page
 	LastID() string
+	// HasPrev indicates that there's items on a previous page
 	HasPrev() bool
+	// HasNext indicates that there's items on a next page
 	HasNext() bool
+	// Length returns length of result set
 	Length() uint32
 }
 
@@ -165,37 +183,30 @@ type pageInfo struct {
 	length  uint32
 }
 
-// ID get last id
-func (c *pageCursor) ID() string {
+func (c *pageCursor) CursorID() string {
 	return c.cursorID
 }
 
-// Limit get query limit
 func (c *pageCursor) Limit() uint32 {
 	return c.limit
 }
 
-// Dir get cursor direction
-func (c *pageCursor) Dir() direction {
+func (c *pageCursor) Direction() direction {
 	return c.dir
 }
 
-// IsForward true if cursor direction is forward
 func (c *pageCursor) IsForward() bool {
 	return c.dir == Forward
 }
 
-// IsBackward true if cursor direction is backward
 func (c *pageCursor) IsBackward() bool {
 	return c.dir == Backward
 }
 
-// Field name of field to be used as a cursor
 func (c *pageCursor) Field() string {
 	return c.field
 }
 
-// Value raw string value of cursor
 func (c *pageCursor) Value() any {
 	return c.value
 }
@@ -231,27 +242,26 @@ func (c *pageCursor) CreateID(obj any) string {
 	return base64.StdEncoding.EncodeToString([]byte(c.Field() + ":" + value))
 }
 
-// FirstID get first cursor id of result page
+func (c *pageCursor) Builder(kind sqlBuilderKind) Builder {
+	return GetBuilder(c, kind)
+}
+
 func (p *pageInfo) FirstID() string {
 	return p.firstID
 }
 
-// LastID get last cursor id of result page
 func (p *pageInfo) LastID() string {
 	return p.lastID
 }
 
-// HasPrev result has previous page
 func (p *pageInfo) HasPrev() bool {
 	return p.hasPrev
 }
 
-// HasNext result has next page
 func (p *pageInfo) HasNext() bool {
 	return p.hasNext
 }
 
-// Length of result page
 func (p *pageInfo) Length() uint32 {
 	return p.length
 }
@@ -303,7 +313,7 @@ func NewCursor(obj interface{}, limit uint32, dir direction) (Cursor, error) {
 }
 
 // GetResult gets slice of result models
-func GetResult[R any](c Cursor, in []*R) ([]*R, IPage, error) {
+func GetResult[R any](c Cursor, in []*R) ([]*R, Page, error) {
 	return getCursorSlice(c, in), getPageInfo(c, in), nil
 }
 
@@ -315,7 +325,7 @@ func getCursorSlice[R any](c Cursor, in []*R) []*R {
 	return in[:l]
 }
 
-func getPageInfo[R any](c Cursor, in []*R) IPage {
+func getPageInfo[R any](c Cursor, in []*R) Page {
 	if len(in) == 0 {
 		return &pageInfo{hasNext: false}
 	}
@@ -327,7 +337,7 @@ func getPageInfo[R any](c Cursor, in []*R) IPage {
 	if uint32(resultLen) < c.Limit() {
 		length = uint32(resultLen)
 	}
-	res.hasPrev = c.ID() != ""
+	res.hasPrev = c.CursorID() != ""
 	res.hasNext = resultLen > int(c.Limit())
 	res.length = length
 

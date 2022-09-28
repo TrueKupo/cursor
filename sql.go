@@ -5,9 +5,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/truekupo/cursor/sql/spanner"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+
+	"github.com/truekupo/cursor/sql/spanner"
 )
 
 type sqlBuilderKind uint8
@@ -31,7 +32,7 @@ type sqlBuilder struct {
 	params BuilderParams
 }
 
-func (c *pageCursor) Builder(kind sqlBuilderKind) Builder {
+func GetBuilder(c Cursor, kind sqlBuilderKind) Builder {
 	return &sqlBuilder{
 		kind:   kind,
 		cursor: c,
@@ -81,7 +82,7 @@ func (b *sqlBuilder) ToSQL() (string, BuilderParams, error) {
 func (b *sqlBuilder) WithCursor(c Cursor) *sqlBuilder {
 	field := c.Field()
 	var cond string
-	if c.ID() != "" {
+	if c.CursorID() != "" {
 		cond += fmt.Sprint(" AND ", field)
 		if c.IsForward() {
 			cond += " > "
