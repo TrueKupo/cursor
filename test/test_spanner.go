@@ -10,7 +10,7 @@ import (
 
 type Object struct {
 	ID        string    `cursor:""`
-	CreatedAt time.Time `cursor:"default"`
+	CreatedAt time.Time `cursor:"default,desc"`
 }
 
 func main() {
@@ -18,7 +18,7 @@ func main() {
 	// create cursor from cursor.Params object
 	in := &cursor.Params{
 		ID:    "SUQ6MzdlOTNmYmMtNjk3Yy00NmJjLWFhNjMtZDFmMTI3MGNjYzc3",
-		Dir:   1,
+		Dir:   0,
 		Limit: 20,
 	}
 	cr, err := cursor.FromParams(Object{}, in)

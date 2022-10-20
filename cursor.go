@@ -42,6 +42,16 @@ const (
 	invalidDirection
 )
 
+// sortOrder for cursor
+type sortOrder uint8
+
+// page cursor sort order values
+const (
+	sortOrderNotSet sortOrder = iota
+	Asc
+	Desc
+)
+
 // NewDefault ...
 func NewDefault(obj any) Cursor {
 	pc, err := NewCursor(obj, defaultLimit, Forward)
@@ -64,6 +74,10 @@ type Cursor interface {
 	IsForward() bool
 	// IsBackward is true if the direction is Backward
 	IsBackward() bool
+	// IsAsc is true if the sort order is ascending
+	IsAsc() bool
+	// IsDesc is true if the sort order is descending
+	IsDesc() bool
 	// Field name in the model to be used as a cursor
 	Field() string
 	// Kind is a data type of cursor field
@@ -98,6 +112,12 @@ type Page interface {
 	Length() uint32
 }
 
+type FieldTags interface {
+	IsValid() bool
+	IsDefault() bool
+	SortOrder() sortOrder
+}
+
 type Params struct {
 	ID    string
 	Dir   int
@@ -108,6 +128,7 @@ type pageCursor struct {
 	cursorID string
 	limit    uint32
 	dir      direction
+	sort     sortOrder
 	field    string
 	value    any
 	kind     valueType
@@ -115,6 +136,24 @@ type pageCursor struct {
 	model any
 
 	builder Builder
+}
+
+type fieldTags struct {
+	isValid   bool
+	isDefault bool
+	sortOrder sortOrder
+}
+
+func (t *fieldTags) IsValid() bool {
+	return t.isValid
+}
+
+func (t *fieldTags) IsDefault() bool {
+	return t.isDefault
+}
+
+func (t *fieldTags) SortOrder() sortOrder {
+	return t.sortOrder
 }
 
 func (c *pageCursor) WithLimit(limit uint32) Cursor {
@@ -173,6 +212,14 @@ func (c *pageCursor) IsForward() bool {
 
 func (c *pageCursor) IsBackward() bool {
 	return c.dir == Backward
+}
+
+func (c *pageCursor) IsAsc() bool {
+	return c.sort == Asc
+}
+
+func (c *pageCursor) IsDesc() bool {
+	return c.sort == Desc
 }
 
 func (c *pageCursor) Field() string {
@@ -242,14 +289,18 @@ func (c *pageCursor) initEmptyCursor() error {
 	t := reflect.TypeOf(c.model)
 
 	for i := 0; i < t.NumField(); i++ {
-		tag := t.Field(i).Tag.Get(tagName)
-		if tag == defValue {
+		tags := getFieldTags(t.Field(i))
+		if !tags.IsValid() {
+			continue
+		}
+		if tags.IsDefault() {
 			kind := mapFieldType(c.model, t.Field(i).Name)
 			if kind == 0 {
 				return status.Errorf(codes.InvalidArgument, "not supported cursor type")
 			}
 
 			c.field = t.Field(i).Name
+			c.sort = tags.SortOrder()
 			c.kind = kind
 			break
 		}
@@ -384,6 +435,12 @@ func applyCursorID(c *pageCursor, cursorID string) (Cursor, error) {
 		if err != nil {
 			return c, err
 		}
+
+		tags := getFieldTags(sf)
+		if !tags.IsValid() {
+			return c, status.Errorf(codes.InvalidArgument, "invalid model field tags")
+		}
+		c.sort = tags.SortOrder()
 	}
 
 	c.cursorID = cursorID
@@ -431,4 +488,28 @@ func decodeFieldValue(raw string, kind valueType) (any, error) {
 		return time.UnixMicro(usec), nil
 	}
 	return nil, status.Error(codes.InvalidArgument, "invalid value type")
+}
+
+func getFieldTags(field reflect.StructField) FieldTags {
+	res := &fieldTags{}
+	tag, ok := field.Tag.Lookup(tagName)
+	if !ok {
+		return res
+	}
+	tags := strings.Split(tag, ",")
+	for _, v := range tags {
+		switch v {
+		case defValue:
+			res.isDefault = true
+		case "asc":
+			res.sortOrder = Asc
+		case "desc":
+			res.sortOrder = Desc
+		}
+	}
+	if res.sortOrder == sortOrderNotSet {
+		res.sortOrder = Asc
+	}
+	res.isValid = true
+	return res
 }
